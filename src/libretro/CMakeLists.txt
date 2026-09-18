@@ -42,6 +42,7 @@ endif()
 
 if(APPLE)
     target_sources(plat PRIVATE ../unix/macOSXGlue.m)
+    target_include_directories(plat PRIVATE ../unix)
     target_link_libraries(86Box "-framework Foundation")
 endif()
 
