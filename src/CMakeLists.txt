@@ -197,6 +197,11 @@ if(APPLE)
     endif()
 endif()
 
+# zlib's own CONFIG package exports ZLIB::ZLIBSTATIC; FindZLIB — and every
+# package that names zlib in its link interface — expects ZLIB::ZLIB, so pin
+# the module form before anything pulls the config in.
+find_package(ZLIB MODULE REQUIRED)
+
 find_package(Freetype REQUIRED)
 include_directories(${FREETYPE_INCLUDE_DIRS})
 if(FREETYPE_INCLUDE_DIR_ft2build)

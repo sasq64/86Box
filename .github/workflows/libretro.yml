@@ -17,8 +17,7 @@ permissions:
   contents: read
 
 env:
-  # No GUI, no host audio, and none of the optional MIDI backends: a core that
-  # pulls in fewer shared libraries is a core that loads on more machines.
+  # No GUI, no host audio, and none of the optional MIDI backends.
   CORE_CMAKE_ARGS: >-
     -G Ninja
     -D CMAKE_BUILD_TYPE=Release
@@ -27,6 +26,11 @@ env:
     -D FLUIDSYNTH=OFF
     -D MUNT=OFF
     -D VNC=OFF
+  # A core is downloaded onto machines that have none of its dependencies, so
+  # on Linux and macOS vcpkg builds every one of them as a static library and
+  # the core links them in. The tool is pinned here; the port versions come
+  # from the registry baseline in vcpkg.json.
+  VCPKG_COMMIT: e6f9e70a29a3e80a1fc510d8503304315447112f
 
 jobs:
   linux-x86_64:
@@ -34,7 +38,9 @@ jobs:
     # Oldest supported runner, so the core links against an older glibc and
     # stays loadable on the widest range of installs.
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 120
+    env:
+      VCPKG_TRIPLET: x64-linux-pic
     steps:
       - name: Check out repository code
         uses: actions/checkout@v6
@@ -44,21 +50,49 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential cmake ninja-build pkg-config file \
-            libfreetype-dev libpng-dev zlib1g-dev libzstd-dev \
-            libslirp-dev libsndfile1-dev
+            curl zip unzip tar autoconf automake libtool python3
 
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/vcpkg/archives
+          key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ env.VCPKG_TRIPLET }}-
+
+      - name: Set up vcpkg
+        run: |
+          set -euo pipefail
+          git clone https://github.com/microsoft/vcpkg "$RUNNER_TEMP/vcpkg"
+          git -C "$RUNNER_TEMP/vcpkg" checkout "$VCPKG_COMMIT"
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=$RUNNER_TEMP/vcpkg" >> "$GITHUB_ENV"
+
+      # --as-needed drops the libatomic libslirp's .pc asks for but nothing
+      # references; the two -static- flags fold in the GCC runtime.
       - name: Configure
-        run: cmake -S . -B build ${{ env.CORE_CMAKE_ARGS }}
+        run: >-
+          cmake -S . -B build ${{ env.CORE_CMAKE_ARGS }}
+          -D CMAKE_MODULE_LINKER_FLAGS="-Wl,--as-needed -static-libgcc -static-libstdc++"
+          -D CMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -D VCPKG_OVERLAY_TRIPLETS=cmake/vcpkg-triplets
+          -D VCPKG_TARGET_TRIPLET=${{ env.VCPKG_TRIPLET }}
 
       - name: Build core
         run: cmake --build build -j"$(nproc)"
 
       - name: Inspect core
         run: |
-          file build/src/86box_libretro.so
-          ls -l build/src/86box_libretro.so
-          nm -D --defined-only build/src/86box_libretro.so | grep -q ' T retro_run$'
-          ldd build/src/86box_libretro.so
+          set -euo pipefail
+          core=build/src/86box_libretro.so
+          file "$core"
+          ls -l "$core"
+          nm -D --defined-only "$core" | grep -q ' T retro_run$'
+          readelf -d "$core" | grep NEEDED
+          # Anything outside glibc means a dependency slipped back out of the
+          # static link and the core would fail to load on a bare machine.
+          readelf -d "$core" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' \
+            | grep -vE '^(libc\.so\.6|libm\.so\.6|libdl\.so\.2|librt\.so\.1|libpthread\.so\.0|ld-linux-x86-64\.so\.2)$' \
+            && { echo "::error::core links a non-system library"; exit 1; } || true
 
       - name: Upload core
         uses: actions/upload-artifact@v7
@@ -70,29 +104,57 @@ jobs:
   macos-arm64:
     name: macOS arm64
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 120
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
+      VCPKG_TRIPLET: arm64-osx-pic
     steps:
       - name: Check out repository code
         uses: actions/checkout@v6
 
       - name: Install dependencies
-        run: brew install cmake ninja pkgconf freetype libpng libslirp libsndfile zstd
+        run: brew install cmake ninja pkgconf autoconf automake libtool
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/vcpkg/archives
+          key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ env.VCPKG_TRIPLET }}-
+
+      - name: Set up vcpkg
+        run: |
+          set -euo pipefail
+          git clone https://github.com/microsoft/vcpkg "$RUNNER_TEMP/vcpkg"
+          git -C "$RUNNER_TEMP/vcpkg" checkout "$VCPKG_COMMIT"
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=$RUNNER_TEMP/vcpkg" >> "$GITHUB_ENV"
 
       # The old recompiler is x86-only; arm64 needs the new one.
       - name: Configure
-        run: cmake -S . -B build ${{ env.CORE_CMAKE_ARGS }} -D NEW_DYNAREC=ON
+        run: >-
+          cmake -S . -B build ${{ env.CORE_CMAKE_ARGS }}
+          -D NEW_DYNAREC=ON
+          -D CMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -D VCPKG_OVERLAY_TRIPLETS=cmake/vcpkg-triplets
+          -D VCPKG_TARGET_TRIPLET=${{ env.VCPKG_TRIPLET }}
 
       - name: Build core
         run: cmake --build build -j"$(sysctl -n hw.ncpu)"
 
       - name: Inspect core
         run: |
-          file build/src/86box_libretro.dylib
-          ls -l build/src/86box_libretro.dylib
-          nm -gU build/src/86box_libretro.dylib | grep -q '_retro_run$'
-          otool -L build/src/86box_libretro.dylib
+          set -euo pipefail
+          core=build/src/86box_libretro.dylib
+          file "$core"
+          ls -l "$core"
+          nm -gU "$core" | grep -q '_retro_run$'
+          otool -L "$core"
+          # Only OS libraries and frameworks may remain.
+          otool -L "$core" | tail -n +2 | awk '{print $1}' \
+            | grep -v '86box_libretro' \
+            | grep -vE '^(/usr/lib/|/System/Library/Frameworks/)' \
+            && { echo "::error::core links a non-system library"; exit 1; } || true
 
       - name: Upload core
         uses: actions/upload-artifact@v7
@@ -109,7 +171,9 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      # UCRT64 is the environment 86Box's own Windows CI builds in.
+      # UCRT64 is the environment 86Box's own Windows CI builds in, and its
+      # STATIC_BUILD default already links the MinGW runtime and every
+      # dependency in.
       - name: Set up MSYS2 (UCRT64)
         uses: msys2/setup-msys2@v2
         with:
@@ -139,9 +203,17 @@ jobs:
 
       - name: Inspect core
         run: |
-          file build/src/86box_libretro.dll
-          ls -l build/src/86box_libretro.dll
-          objdump -p build/src/86box_libretro.dll | grep -q 'retro_run'
+          set -euo pipefail
+          core=build/src/86box_libretro.dll
+          file "$core"
+          ls -l "$core"
+          objdump -p "$core" | grep -q 'retro_run'
+          objdump -p "$core" | sed -n 's/^\tDLL Name: //p' | sort -u
+          # Nothing from the MSYS2 prefix may be imported: those DLLs are not
+          # on the machine the core is downloaded to.
+          objdump -p "$core" | sed -n 's/^\tDLL Name: //p' | sort -u \
+            | grep -iE '^(lib|SDL|zlib|sndfile|slirp|glib)' \
+            && { echo "::error::core imports a non-system DLL"; exit 1; } || true
 
       - name: Upload core
         uses: actions/upload-artifact@v7

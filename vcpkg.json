@@ -15,13 +15,29 @@
     "dependencies": [
         "freetype",
         "libpng",
-        "sdl3",
-        "rtmidi",
         "libslirp",
-        "fluidsynth",
-        "libsndfile"
+        "libsndfile",
+        "zstd"
     ],
     "features": {
+        "sdl": {
+            "description": "SDL, used by every frontend but the libretro core",
+            "dependencies": [
+                "sdl3"
+            ]
+        },
+        "rtmidi": {
+            "description": "RtMidi MIDI output",
+            "dependencies": [
+                "rtmidi"
+            ]
+        },
+        "fluidsynth": {
+            "description": "FluidSynth MIDI synth",
+            "dependencies": [
+                "fluidsynth"
+            ]
+        },
         "qt-ui": {
             "description": "Qt User Interface",
             "dependencies": [
