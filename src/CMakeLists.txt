@@ -65,6 +65,11 @@ if(LIBRETRO)
         PREFIX ""
         C_VISIBILITY_PRESET hidden
         CXX_VISIBILITY_PRESET hidden)
+    # A MODULE library is a .so on macOS as well; libretro frontends look for
+    # the platform's own extension.
+    if(APPLE)
+        set_target_properties(86Box PROPERTIES SUFFIX ".dylib")
+    endif()
 endif()
 
 if(CMAKE_SYSTEM_NAME MATCHES "Linux")
@@ -254,7 +259,9 @@ endif()
 
 
 # Install other dependencies
-if(WIN32)
+if(LIBRETRO)
+    # Nothing to bundle: the core is loaded by a frontend that brings its own.
+elseif(WIN32)
     install(CODE "
         include(BundleUtilities)
         get_filename_component(CMAKE_INSTALL_PREFIX_ABSOLUTE \${CMAKE_INSTALL_PREFIX} ABSOLUTE)
@@ -300,7 +307,8 @@ add_subdirectory(sound)
 add_subdirectory(utils)
 add_subdirectory(video)
 
-if (APPLE)
+# The mac subdirectory is all .app bundle: icon, Info.plist. A core is neither.
+if (APPLE AND NOT LIBRETRO)
     add_subdirectory(mac)
 endif()
 
