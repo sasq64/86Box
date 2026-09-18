@@ -27,6 +27,17 @@ set(CMAKE_FIND_PACKAGE_PREFER_CONFIG ON)
 
 set(CMAKE_CONFIGURATION_TYPES "Debug;Release;UltraDebug;Optimized" CACHE STRING "")
 
+# A libretro core has no GUI and no host audio of its own.
+option(LIBRETRO "Build a libretro core instead of an application" OFF)
+if(LIBRETRO)
+    # Everything that goes into the shared module has to be position
+    # independent, including the object libraries.
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    set(QT OFF)
+    set(OPENAL OFF)
+    set(DISCORD OFF)
+endif()
+
 if(NOT DEFINED QT OR QT)
     list(APPEND VCPKG_MANIFEST_FEATURES "qt-ui")
 endif()
@@ -121,7 +132,7 @@ include(CompilerFlags)
 #      ------       -----------                                                  ----
 option(RELEASE      "Release build"                                              OFF)
 option(DYNAREC      "Dynamic recompiler"                                         ON)
-option(OPENAL       "OpenAL"                                                     ON)
+cmake_dependent_option(OPENAL "OpenAL" ON "NOT LIBRETRO" OFF)
 option(RTMIDI       "RtMidi"                                                     ON)
 option(FLUIDSYNTH   "FluidSynth"                                                 ON)
 option(MUNT         "MUNT"                                                       ON)
@@ -130,10 +141,10 @@ option(VNC          "VNC renderer"                                              
 option(MINITRACE    "Enable Chrome tracing using the modified minitrace library" OFF)
 option(GDBSTUB      "Enable GDB stub server for debugging"                       OFF)
 option(DEV_BRANCH   "Development branch"                                         OFF)
-option(DISCORD      "Discord Rich Presence support"                              ON)
+cmake_dependent_option(DISCORD "Discord Rich Presence support" ON "NOT LIBRETRO" OFF)
 option(DEBUGREGS486 "Enable debug register opeartion on 486+ CPUs"               OFF)
 option(LIBASAN      "Enable compilation with the addresss sanitizer"             OFF)
-option(QT           "Use the Qt-based user interface"                            ON)
+cmake_dependent_option(QT "Use the Qt-based user interface" ON "NOT LIBRETRO" OFF)
 option(SDL2         "Use SDL2 instead of SDL3"                                   OFF)
 option(BUILD_TESTING "Build the unit test suite"                                  OFF)
 option(BUILD_BENCHMARKS "Build performance benchmarks"                            OFF)

@@ -31,6 +31,10 @@ extern void config_load(void);
 extern void config_save_global(void);
 extern void config_save(void);
 
+/* Set by a frontend whose machine config is read-only content, so that nothing
+   the emulator migrates or falls back to is written back over it. */
+extern int config_readonly;
+
 #ifdef EMU_INI_H
 extern ini_t config_get_ini(void);
 #else

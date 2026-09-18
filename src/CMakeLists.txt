@@ -24,7 +24,14 @@ if(APPLE)
     set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 endif()
 
-add_executable(86Box
+# The libretro core is a shared object the frontend dlopen()s, not a program.
+if(LIBRETRO)
+    add_library(86Box MODULE)
+else()
+    add_executable(86Box)
+endif()
+
+target_sources(86Box PRIVATE
     86box.c
     config.c
     timer.c
@@ -51,6 +58,14 @@ add_executable(86Box
     nvr_ps2.c
     machine_status.c
 )
+
+if(LIBRETRO)
+    set_target_properties(86Box PROPERTIES
+        OUTPUT_NAME "86box_libretro"
+        PREFIX ""
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden)
+endif()
 
 if(CMAKE_SYSTEM_NAME MATCHES "Linux")
     add_compile_definitions(_FILE_OFFSET_BITS=64 _LARGEFILE_SOURCE=1 _LARGEFILE64_SOURCE=1)
@@ -221,7 +236,9 @@ if(MINITRACE)
     target_link_libraries(86Box minitrace)
 endif()
 
-if(WIN32 OR (APPLE AND CMAKE_MACOSX_BUNDLE))
+if(LIBRETRO)
+    install(TARGETS 86Box LIBRARY DESTINATION "lib/libretro")
+elseif(WIN32 OR (APPLE AND CMAKE_MACOSX_BUNDLE))
     # Copy the binary to the root of the install prefix on Windows and macOS
     install(TARGETS 86Box DESTINATION ".")
 else()
@@ -287,13 +304,18 @@ if (APPLE)
     add_subdirectory(mac)
 endif()
 
-add_subdirectory(osd)
-
-if (QT)
-    add_subdirectory(qt)
-else()
+if(LIBRETRO)
     add_compile_definitions(USE_SDL_UI)
-    add_subdirectory(unix)
+    add_subdirectory(libretro)
+else()
+    add_subdirectory(osd)
+
+    if (QT)
+        add_subdirectory(qt)
+    else()
+        add_compile_definitions(USE_SDL_UI)
+        add_subdirectory(unix)
+    endif()
 endif()
 
 if(CMAKE_SYSTEM_NAME MATCHES "NetBSD")

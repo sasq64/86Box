@@ -108,6 +108,8 @@ static ini_t    config;
 static ini_t    global;
 static mutex_t *config_mutex = NULL;
 
+int config_readonly = 0;
+
 #ifdef ENABLE_CONFIG_LOG
 int config_do_log = ENABLE_CONFIG_LOG;
 
@@ -4584,6 +4586,11 @@ config_save_global(void)
 void
 config_save(void)
 {
+    /* A frontend that was handed its machine config as read-only content
+       rather than as a VM of its own - the libretro core - sets this. */
+    if (config_readonly)
+        return;
+
     if (config_mutex)
         thread_wait_mutex(config_mutex);
 
