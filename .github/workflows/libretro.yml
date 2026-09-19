@@ -52,8 +52,9 @@ jobs:
             build-essential cmake ninja-build pkg-config file \
             curl zip unzip tar autoconf automake libtool python3
 
-      - name: Cache vcpkg packages
-        uses: actions/cache@v4
+      - name: Restore cached vcpkg packages
+        id: vcpkg-cache
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/vcpkg/archives
           key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
@@ -70,12 +71,28 @@ jobs:
       # --as-needed drops the libatomic libslirp's .pc asks for but nothing
       # references; the two -static- flags fold in the GCC runtime.
       - name: Configure
+        id: configure
         run: >-
           cmake -S . -B build ${{ env.CORE_CMAKE_ARGS }}
           -D CMAKE_MODULE_LINKER_FLAGS="-Wl,--as-needed -static-libgcc -static-libstdc++"
           -D CMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
           -D VCPKG_OVERLAY_TRIPLETS=cmake/vcpkg-triplets
           -D VCPKG_TARGET_TRIPLET=${{ env.VCPKG_TRIPLET }}
+
+      # Saved here rather than by actions/cache's combined form, whose post
+      # step only runs on success: a failure further down used to throw away
+      # the whole dependency build.
+      - name: Save vcpkg packages
+        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/vcpkg/archives
+          # A configure that died half-way leaves an incomplete set, which
+          # must not claim the primary key: the next run would hit it and
+          # never save the complete one.
+          key: ${{ steps.configure.outcome == 'success'
+            && steps.vcpkg-cache.outputs.cache-primary-key
+            || format('{0}-partial-{1}', steps.vcpkg-cache.outputs.cache-primary-key, github.run_id) }}
 
       - name: Build core
         run: cmake --build build -j"$(nproc)"
@@ -121,8 +138,9 @@ jobs:
       - name: Install dependencies
         run: brew install cmake ninja pkgconf autoconf automake libtool
 
-      - name: Cache vcpkg packages
-        uses: actions/cache@v4
+      - name: Restore cached vcpkg packages
+        id: vcpkg-cache
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/vcpkg/archives
           key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
@@ -138,12 +156,28 @@ jobs:
 
       # The old recompiler is x86-only; arm64 needs the new one.
       - name: Configure
+        id: configure
         run: >-
           cmake -S . -B build ${{ env.CORE_CMAKE_ARGS }}
           -D NEW_DYNAREC=ON
           -D CMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
           -D VCPKG_OVERLAY_TRIPLETS=cmake/vcpkg-triplets
           -D VCPKG_TARGET_TRIPLET=${{ env.VCPKG_TRIPLET }}
+
+      # Saved here rather than by actions/cache's combined form, whose post
+      # step only runs on success: a failure further down used to throw away
+      # the whole dependency build.
+      - name: Save vcpkg packages
+        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/vcpkg/archives
+          # A configure that died half-way leaves an incomplete set, which
+          # must not claim the primary key: the next run would hit it and
+          # never save the complete one.
+          key: ${{ steps.configure.outcome == 'success'
+            && steps.vcpkg-cache.outputs.cache-primary-key
+            || format('{0}-partial-{1}', steps.vcpkg-cache.outputs.cache-primary-key, github.run_id) }}
 
       - name: Build core
         run: cmake --build build -j"$(sysctl -n hw.ncpu)"
