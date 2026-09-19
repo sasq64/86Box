@@ -86,13 +86,19 @@ jobs:
           core=build/src/86box_libretro.so
           file "$core"
           ls -l "$core"
-          nm -D --defined-only "$core" | grep -q ' T retro_run$'
-          readelf -d "$core" | grep NEEDED
+          # Nothing pipes into grep -q: the writer would be killed by SIGPIPE
+          # and pipefail would report that as a failed step.
+          syms=$(nm -D --defined-only "$core")
+          grep -q ' T retro_run$' <<<"$syms"
+          needed=$(readelf -d "$core" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p')
+          echo "$needed"
           # Anything outside glibc means a dependency slipped back out of the
           # static link and the core would fail to load on a bare machine.
-          readelf -d "$core" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' \
-            | grep -vE '^(libc\.so\.6|libm\.so\.6|libdl\.so\.2|librt\.so\.1|libpthread\.so\.0|ld-linux-x86-64\.so\.2)$' \
-            && { echo "::error::core links a non-system library"; exit 1; } || true
+          bad=$(grep -vE '^(libc\.so\.6|libm\.so\.6|libdl\.so\.2|librt\.so\.1|libpthread\.so\.0|ld-linux-x86-64\.so\.2)$' <<<"$needed" || true)
+          if [ -n "$bad" ]; then
+            echo "::error::core links a non-system library: $(tr '\n' ' ' <<<"$bad")"
+            exit 1
+          fi
 
       - name: Upload core
         uses: actions/upload-artifact@v7
@@ -148,13 +154,19 @@ jobs:
           core=build/src/86box_libretro.dylib
           file "$core"
           ls -l "$core"
-          nm -gU "$core" | grep -q '_retro_run$'
-          otool -L "$core"
+          # Apple's nm turns the SIGPIPE from grep -q into a hard error, so it
+          # writes to a variable instead of a pipe.
+          syms=$(nm -gU "$core")
+          grep -q '_retro_run$' <<<"$syms"
+          libs=$(otool -L "$core" | tail -n +2 | awk '{print $1}')
+          echo "$libs"
           # Only OS libraries and frameworks may remain.
-          otool -L "$core" | tail -n +2 | awk '{print $1}' \
-            | grep -v '86box_libretro' \
-            | grep -vE '^(/usr/lib/|/System/Library/Frameworks/)' \
-            && { echo "::error::core links a non-system library"; exit 1; } || true
+          bad=$(grep -v '86box_libretro' <<<"$libs" \
+            | grep -vE '^(/usr/lib/|/System/Library/Frameworks/)' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::core links a non-system library: $(tr '\n' ' ' <<<"$bad")"
+            exit 1
+          fi
 
       - name: Upload core
         uses: actions/upload-artifact@v7
@@ -207,13 +219,17 @@ jobs:
           core=build/src/86box_libretro.dll
           file "$core"
           ls -l "$core"
-          objdump -p "$core" | grep -q 'retro_run'
-          objdump -p "$core" | sed -n 's/^\tDLL Name: //p' | sort -u
+          headers=$(objdump -p "$core")
+          grep -q 'retro_run' <<<"$headers"
+          dlls=$(sed -n 's/^\tDLL Name: //p' <<<"$headers" | sort -u)
+          echo "$dlls"
           # Nothing from the MSYS2 prefix may be imported: those DLLs are not
           # on the machine the core is downloaded to.
-          objdump -p "$core" | sed -n 's/^\tDLL Name: //p' | sort -u \
-            | grep -iE '^(lib|SDL|zlib|sndfile|slirp|glib)' \
-            && { echo "::error::core imports a non-system DLL"; exit 1; } || true
+          bad=$(grep -iE '^(lib|SDL|zlib|sndfile|slirp|glib)' <<<"$dlls" || true)
+          if [ -n "$bad" ]; then
+            echo "::error::core imports a non-system DLL: $(tr '\n' ' ' <<<"$bad")"
+            exit 1
+          fi
 
       - name: Upload core
         uses: actions/upload-artifact@v7
